@@ -8,11 +8,27 @@ import os
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime
+from functools import wraps
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+
+# Get API key from environment
+INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY')
+
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key')
+        if not api_key or api_key != INTERNAL_API_KEY:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid or missing API key'
+            }), 401
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Ensure instance folder exists
 os.makedirs(app.instance_path, exist_ok=True)
@@ -147,6 +163,7 @@ def health_check():
     return jsonify(health_status)
 
 @app.route('/db-info', methods=['GET'])
+@require_api_key
 def get_db_info():
     """Get database statistics and information"""
     try:
@@ -212,6 +229,7 @@ def get_problems_by_platform(platform):
         }), 500
 
 @app.route('/scrape', methods=['POST'])
+@require_api_key
 def scrape_problems():
     """Trigger scraping of problems from all platforms"""
     try:
