@@ -9,11 +9,17 @@ from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime
 from functools import wraps
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from models import Problem, db
+from utils.url_parser import extract_problem_identifier
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+CORS(app)
 
 # Get API key from environment
 INTERNAL_API_KEY = os.getenv('INTERNAL_API_KEY')
@@ -43,8 +49,13 @@ app.config['CACHE_TYPE'] = 'simple'  # Use simple in-memory cache
 app.config['CACHE_DEFAULT_TIMEOUT'] = 300  # Cache timeout in seconds (5 minutes)
 
 # Initialize extensions
-db = SQLAlchemy(app)
+db.init_app(app)
 cache = Cache(app)
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 def init_db():
     """Initialize the database"""
@@ -69,16 +80,6 @@ def init_db():
             print("Error: Database file not created")
         
         print("Database initialization complete\n")
-
-# Models
-class Problem(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(200), nullable=False)
-    platform = db.Column(db.String(50), nullable=False)
-    difficulty = db.Column(db.String(50))
-    url = db.Column(db.String(200))
-    points = db.Column(db.String(50))
-    tags = db.Column(db.String(200))
 
 # Initialize scrapers
 leetcode_scraper = LeetCodeScraper()
@@ -261,6 +262,76 @@ def scrape_problems():
             'status': 'error',
             'message': str(e)
         }), 500
+
+@app.route('/search', methods=['POST'])
+@limiter.limit("60 per minute")
+def search_problem():
+    """
+    Search for a problem by its URL.
+    Required headers:
+    - X-API-Key: Your API key
+    Required body:
+    - url: The problem URL to search for
+    """
+    # Check API key
+    api_key = request.headers.get('X-API-Key')
+    if not api_key or api_key != os.getenv('INTERNAL_API_KEY'):
+        return jsonify({'error': 'Invalid or missing API key'}), 401
+
+    # Get URL from request body
+    data = request.get_json()
+    if not data or 'url' not in data:
+        return jsonify({'error': 'URL is required'}), 400
+
+    url = data['url']
+    print(f"Received URL: {url}")
+    
+    platform, identifier = extract_problem_identifier(url)
+    print(f"Extracted platform: {platform}, identifier: {identifier}")
+
+    if not platform or not identifier:
+        return jsonify({
+            'error': 'Invalid or unsupported URL format',
+            'details': f'URL: {url}, Platform: {platform}, Identifier: {identifier}'
+        }), 400
+
+    # Search for the problem in the database
+    if platform == 'leetcode':
+        # For LeetCode, we can search by the problem slug in the URL
+        problem = Problem.query.filter_by(
+            platform='leetcode',
+            url=url
+        ).first()
+        print(f"LeetCode search result: {problem}")
+    elif platform == 'codeforces':
+        # For Codeforces, we need to match the exact problem identifier
+        # The identifier is in format "contest_number/problem_letter" (e.g., "4/A")
+        contest_number, problem_letter = identifier.split('/')
+        # Construct the exact URL pattern we're looking for
+        exact_url = f"https://codeforces.com/problemset/problem/{contest_number}/{problem_letter}"
+        problem = Problem.query.filter_by(
+            platform='codeforces',
+            url=exact_url
+        ).first()
+        print(f"Codeforces search result: {problem}")
+    else:
+        return jsonify({'error': 'Unsupported platform'}), 400
+
+    if not problem:
+        return jsonify({'error': 'Problem not found in database'}), 404
+
+    return jsonify({
+        'status': 'success',
+        'problem': {
+            'id': problem.id,
+            'title': problem.title,
+            'platform': problem.platform,
+            'difficulty': problem.difficulty,
+            'url': problem.url,
+            'points': problem.points,
+            'tags': problem.tags
+        }
+    })
 
 if __name__ == '__main__':
     # Initialize database only when running the app directly

@@ -78,12 +78,51 @@ python app.py
 - `GET /problems` - Get all problems
 - `GET /problems/<platform>` - Get platform-specific problems
 - `POST /scrape` - Trigger scraping
+- `POST /search` - Search problem by URL
 
 ### Authentication
 All endpoints except `/` and `/health` require API key authentication:
 ```bash
 curl -H "X-API-Key: your_api_key_here" http://localhost:5000/endpoint
 ```
+
+### Search Endpoint Usage
+Search for a problem using its URL:
+
+```bash
+# Search for a LeetCode problem
+curl -X POST http://localhost:5000/search \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://leetcode.com/problems/two-sum/"}'
+
+# Search for a Codeforces problem
+curl -X POST http://localhost:5000/search \
+  -H "X-API-Key: your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://codeforces.com/problemset/problem/4/A"}'
+```
+
+Response format:
+```json
+{
+    "status": "success",
+    "problem": {
+        "id": 1,
+        "title": "Two Sum",
+        "platform": "leetcode",
+        "difficulty": "Easy",
+        "url": "https://leetcode.com/problems/two-sum/",
+        "points": null,
+        "tags": "Array,Hash Table"
+    }
+}
+```
+
+Error responses:
+- 400: Invalid URL format or missing URL
+- 401: Invalid or missing API key
+- 404: Problem not found in database
 
 ## Configuration
 
